@@ -27,9 +27,15 @@ public class Booking {
     @Enumerated(EnumType.STRING)
     private BookingStatus status;
 
-    private String tripType; // ONE_WAY, ROUND_TRIP, RETURN
+    private String tripType;
 
     private int passengers = 1;
+
+    // Stores JSON array of passenger details e.g.
+    // [{"fullName":"...", "passportNumber":"...", "nationality":"...",
+    // "dateOfBirth":"...", "gender":"..."}]
+    @Column(columnDefinition = "TEXT")
+    private String passengerDetails;
 
     public Booking() {
     }
@@ -88,5 +94,13 @@ public class Booking {
 
     public void setPassengers(int passengers) {
         this.passengers = passengers;
+    }
+
+    public String getPassengerDetails() {
+        return passengerDetails;
+    }
+
+    public void setPassengerDetails(String passengerDetails) {
+        this.passengerDetails = passengerDetails;
     }
 }

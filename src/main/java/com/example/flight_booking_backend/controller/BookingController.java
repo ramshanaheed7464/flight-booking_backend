@@ -7,10 +7,14 @@ import com.example.flight_booking_backend.repository.BookingRepository;
 import com.example.flight_booking_backend.repository.FlightRepository;
 import com.example.flight_booking_backend.repository.UserRepository;
 import com.example.flight_booking_backend.security.JwtUtil;
+
+import tools.jackson.databind.ObjectMapper;
+
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Map;
 
 @RestController
@@ -21,13 +25,15 @@ public class BookingController {
     private final UserRepository userRepository;
     private final FlightRepository flightRepository;
     private final JwtUtil jwtUtil;
+    private final ObjectMapper objectMapper;
 
     public BookingController(BookingRepository bookingRepository, UserRepository userRepository,
-            FlightRepository flightRepository, JwtUtil jwtUtil) {
+            FlightRepository flightRepository, JwtUtil jwtUtil, ObjectMapper objectMapper) {
         this.bookingRepository = bookingRepository;
         this.userRepository = userRepository;
         this.flightRepository = flightRepository;
         this.jwtUtil = jwtUtil;
+        this.objectMapper = objectMapper;
     }
 
     // POST /api/bookings
@@ -48,6 +54,16 @@ public class BookingController {
         String tripType = body.getOrDefault("tripType", "ONE_WAY").toString();
         int passengers = Integer.parseInt(body.getOrDefault("passengers", "1").toString());
 
+        // Serialize passenger details to JSON string
+        String passengerDetailsJson = null;
+        if (body.containsKey("passengerDetails")) {
+            try {
+                passengerDetailsJson = objectMapper.writeValueAsString(body.get("passengerDetails"));
+            } catch (Exception e) {
+                return ResponseEntity.badRequest().body("Invalid passenger details format");
+            }
+        }
+
         var flight = flightRepository.findById(flightId).orElse(null);
         if (flight == null)
             return ResponseEntity.badRequest().body("Flight not found");
@@ -64,15 +80,17 @@ public class BookingController {
         booking.setBookingTime(LocalDateTime.now());
         booking.setTripType(tripType);
         booking.setPassengers(passengers);
+        booking.setPassengerDetails(passengerDetailsJson);
         bookingRepository.save(booking);
 
-        // Round trip — book return flight too
+        // Round trip — book return flight too (shares same passenger details)
         if ("ROUND_TRIP".equals(tripType) && body.containsKey("returnFlightId")) {
             Long returnFlightId = Long.valueOf(body.get("returnFlightId").toString());
             var returnFlight = flightRepository.findById(returnFlightId).orElse(null);
             if (returnFlight != null && returnFlight.getSeatsAvailable() >= passengers) {
                 returnFlight.setSeatsAvailable(returnFlight.getSeatsAvailable() - passengers);
                 flightRepository.save(returnFlight);
+
                 Booking returnBooking = new Booking();
                 returnBooking.setUser(user);
                 returnBooking.setFlight(returnFlight);
@@ -80,6 +98,7 @@ public class BookingController {
                 returnBooking.setBookingTime(LocalDateTime.now());
                 returnBooking.setTripType("RETURN");
                 returnBooking.setPassengers(passengers);
+                returnBooking.setPassengerDetails(passengerDetailsJson);
                 bookingRepository.save(returnBooking);
             }
         }
@@ -120,7 +139,6 @@ public class BookingController {
         if (booking.getStatus() == BookingStatus.CANCELLED)
             return ResponseEntity.badRequest().body("Already cancelled");
 
-        // Restore seats
         var flight = booking.getFlight();
         flight.setSeatsAvailable(flight.getSeatsAvailable() + booking.getPassengers());
         flightRepository.save(flight);
