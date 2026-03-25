@@ -2,6 +2,8 @@ package com.example.flight_booking_backend.model;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.*;
+
+import java.time.LocalDateTime;
 import java.util.List;
 
 @Entity
@@ -20,6 +22,12 @@ public class User {
     private String password;
 
     private String role;
+
+    private boolean verified = false;
+
+    private String verificationCode;
+
+    private LocalDateTime verificationExpiry;
 
     @OneToMany(mappedBy = "user")
     @JsonIgnore
@@ -73,5 +81,29 @@ public class User {
 
     public void setRole(String role) {
         this.role = role;
+    }
+
+    public boolean isVerified() {
+        return verified;
+    }
+
+    public void setVerified(boolean verified) {
+        this.verified = verified;
+    }
+
+    public String getVerificationCode() {
+        return verificationCode;
+    }
+
+    public void setVerificationCode(String code) {
+        this.verificationCode = code;
+    }
+
+    public LocalDateTime getVerificationExpiry() {
+        return verificationExpiry;
+    }
+
+    public void setVerificationExpiry(LocalDateTime t) {
+        this.verificationExpiry = t;
     }
 }

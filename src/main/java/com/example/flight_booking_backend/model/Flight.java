@@ -15,7 +15,6 @@ public class Flight {
 
     @Column(unique = true)
     private String flightNumber;
-
     private String source;
     private String destination;
     private LocalDateTime departureTime;

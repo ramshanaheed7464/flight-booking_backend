@@ -20,13 +20,11 @@ public class FlightController {
         this.jwtUtil = jwtUtil;
     }
 
-    // GET /api/flights — anyone can view
     @GetMapping
     public List<Flight> getAllFlights() {
         return flightRepository.findAll();
     }
 
-    // POST /api/flights/add — admin only
     @PostMapping("/add")
     public ResponseEntity<?> addFlight(
             @RequestBody Flight flight,
@@ -37,7 +35,6 @@ public class FlightController {
         return ResponseEntity.ok("Flight added successfully");
     }
 
-    // PUT /api/flights/{id} — admin only
     @PutMapping("/{id}")
     public ResponseEntity<?> updateFlight(
             @PathVariable Long id,

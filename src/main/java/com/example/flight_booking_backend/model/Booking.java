@@ -31,9 +31,6 @@ public class Booking {
 
     private int passengers = 1;
 
-    // Stores JSON array of passenger details e.g.
-    // [{"fullName":"...", "passportNumber":"...", "nationality":"...",
-    // "dateOfBirth":"...", "gender":"..."}]
     @Column(columnDefinition = "TEXT")
     private String passengerDetails;
 

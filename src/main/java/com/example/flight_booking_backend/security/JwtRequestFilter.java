@@ -25,7 +25,6 @@ public class JwtRequestFilter extends OncePerRequestFilter {
     protected boolean shouldNotFilter(HttpServletRequest request) {
         String path = request.getServletPath();
         String method = request.getMethod();
-        // Skip JWT filter entirely for auth endpoints and OPTIONS preflight
         return path.startsWith("/api/auth/")
                 || path.startsWith("/api/auth")
                 || method.equals("OPTIONS");
@@ -46,8 +45,6 @@ public class JwtRequestFilter extends OncePerRequestFilter {
             try {
                 email = jwtUtil.extractClaims(jwt).getSubject();
             } catch (Exception e) {
-                // Token is invalid or expired — do NOT block, just continue unauthenticated
-                // Spring Security will enforce access control based on the route rules
                 chain.doFilter(request, response);
                 return;
             }

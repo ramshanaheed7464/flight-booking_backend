@@ -7,6 +7,7 @@ import com.example.flight_booking_backend.repository.BookingRepository;
 import com.example.flight_booking_backend.repository.FlightRepository;
 import com.example.flight_booking_backend.repository.UserRepository;
 import com.example.flight_booking_backend.security.JwtUtil;
+import com.example.flight_booking_backend.service.EmailService;
 
 import tools.jackson.databind.ObjectMapper;
 
@@ -26,15 +27,20 @@ public class BookingController {
     private final FlightRepository flightRepository;
     private final JwtUtil jwtUtil;
     private final ObjectMapper objectMapper;
+    private final EmailService emailService;
 
     public BookingController(BookingRepository bookingRepository, UserRepository userRepository,
-            FlightRepository flightRepository, JwtUtil jwtUtil, ObjectMapper objectMapper) {
+            FlightRepository flightRepository, JwtUtil jwtUtil, ObjectMapper objectMapper,
+            EmailService emailService) {
         this.bookingRepository = bookingRepository;
         this.userRepository = userRepository;
         this.flightRepository = flightRepository;
         this.jwtUtil = jwtUtil;
         this.objectMapper = objectMapper;
+        this.emailService = emailService;
     }
+
+    // ── User endpoints ────────────────────────────────────────────
 
     // POST /api/bookings
     @PostMapping
@@ -73,6 +79,7 @@ public class BookingController {
         flight.setSeatsAvailable(flight.getSeatsAvailable() - passengers);
         flightRepository.save(flight);
 
+        // Save outbound booking
         Booking booking = new Booking();
         booking.setUser(user);
         booking.setFlight(flight);
@@ -81,12 +88,13 @@ public class BookingController {
         booking.setTripType(tripType);
         booking.setPassengers(passengers);
         booking.setPassengerDetails(passengerDetailsJson);
-        bookingRepository.save(booking);
+        Booking savedBooking = bookingRepository.save(booking);
 
-        // Round trip — book return flight too (shares same passenger details)
+        // Round trip — save return booking, then send ONE combined email
         if ("ROUND_TRIP".equals(tripType) && body.containsKey("returnFlightId")) {
             Long returnFlightId = Long.valueOf(body.get("returnFlightId").toString());
             var returnFlight = flightRepository.findById(returnFlightId).orElse(null);
+
             if (returnFlight != null && returnFlight.getSeatsAvailable() >= passengers) {
                 returnFlight.setSeatsAvailable(returnFlight.getSeatsAvailable() - passengers);
                 flightRepository.save(returnFlight);
@@ -99,14 +107,18 @@ public class BookingController {
                 returnBooking.setTripType("RETURN");
                 returnBooking.setPassengers(passengers);
                 returnBooking.setPassengerDetails(passengerDetailsJson);
-                bookingRepository.save(returnBooking);
+                Booking savedReturnBooking = bookingRepository.save(returnBooking);
+
+                emailService.sendRoundTripConfirmation(savedBooking, savedReturnBooking);
             }
+        } else {
+            emailService.sendBookingConfirmation(savedBooking);
         }
 
         return ResponseEntity.ok("Flight booked successfully");
     }
 
-    // GET /api/bookings
+    // GET /api/bookings — current user's bookings
     @GetMapping
     public ResponseEntity<?> getMyBookings(@RequestHeader("Authorization") String authHeader) {
         String email = extractEmail(authHeader);
@@ -118,7 +130,7 @@ public class BookingController {
         return ResponseEntity.ok(bookingRepository.findByUserId(user.getId()));
     }
 
-    // PUT /api/bookings/{id}/cancel
+    // PUT /api/bookings/{id}/cancel — user cancels their own booking
     @PutMapping("/{id}/cancel")
     public ResponseEntity<?> cancelBooking(
             @PathVariable Long id,
@@ -148,6 +160,80 @@ public class BookingController {
         return ResponseEntity.ok("Booking cancelled");
     }
 
+    // ── Admin endpoints ───────────────────────────────────────────
+
+    // GET /api/bookings/all — all bookings (admin only)
+    @GetMapping("/all")
+    public ResponseEntity<?> getAllBookings(@RequestHeader("Authorization") String authHeader) {
+        if (!isAdmin(authHeader))
+            return ResponseEntity.status(403).body("Access denied: ADMIN role required");
+        List<Booking> all = bookingRepository.findAll();
+        return ResponseEntity.ok(all);
+    }
+
+    // PUT /api/bookings/{id}/status — update booking status (admin only)
+    @PutMapping("/{id}/status")
+    public ResponseEntity<?> updateBookingStatus(
+            @PathVariable Long id,
+            @RequestBody Map<String, String> body,
+            @RequestHeader("Authorization") String authHeader) {
+
+        if (!isAdmin(authHeader))
+            return ResponseEntity.status(403).body("Access denied: ADMIN role required");
+
+        Booking booking = bookingRepository.findById(id).orElse(null);
+        if (booking == null)
+            return ResponseEntity.badRequest().body("Booking not found");
+
+        String statusStr = body.get("status");
+        if (statusStr == null)
+            return ResponseEntity.badRequest().body("Status is required");
+
+        try {
+            BookingStatus newStatus = BookingStatus.valueOf(statusStr.toUpperCase());
+            booking.setStatus(newStatus);
+
+            // Restore seats if admin cancels an active booking
+            if (newStatus == BookingStatus.CANCELLED
+                    && booking.getStatus() != BookingStatus.CANCELLED) {
+                var flight = booking.getFlight();
+                flight.setSeatsAvailable(flight.getSeatsAvailable() + booking.getPassengers());
+                flightRepository.save(flight);
+            }
+
+            bookingRepository.save(booking);
+            return ResponseEntity.ok("Booking status updated to " + newStatus);
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body("Invalid status: " + statusStr);
+        }
+    }
+
+    // DELETE /api/bookings/{id} — delete a booking (admin only)
+    @DeleteMapping("/{id}")
+    public ResponseEntity<?> deleteBooking(
+            @PathVariable Long id,
+            @RequestHeader("Authorization") String authHeader) {
+
+        if (!isAdmin(authHeader))
+            return ResponseEntity.status(403).body("Access denied: ADMIN role required");
+
+        Booking booking = bookingRepository.findById(id).orElse(null);
+        if (booking == null)
+            return ResponseEntity.badRequest().body("Booking not found");
+
+        // Restore seats if booking was active
+        if (booking.getStatus() == BookingStatus.BOOKED) {
+            var flight = booking.getFlight();
+            flight.setSeatsAvailable(flight.getSeatsAvailable() + booking.getPassengers());
+            flightRepository.save(flight);
+        }
+
+        bookingRepository.deleteById(id);
+        return ResponseEntity.ok("Booking deleted");
+    }
+
+    // ── Helpers ───────────────────────────────────────────────────
+
     private String extractEmail(String authHeader) {
         if (authHeader == null || !authHeader.startsWith("Bearer "))
             return null;
@@ -155,6 +241,17 @@ public class BookingController {
             return jwtUtil.extractClaims(authHeader.substring(7)).getSubject();
         } catch (Exception e) {
             return null;
+        }
+    }
+
+    private boolean isAdmin(String authHeader) {
+        if (authHeader == null || !authHeader.startsWith("Bearer "))
+            return false;
+        try {
+            String role = jwtUtil.extractRole(authHeader.substring(7));
+            return "ADMIN".equalsIgnoreCase(role);
+        } catch (Exception e) {
+            return false;
         }
     }
 }
